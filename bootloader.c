@@ -29,6 +29,7 @@
         a table is provided that maps out pins to uarts for all avr0/1
 
     --- [5] ---
+    compile and program bootloader
 
 -----------------------------------------------------------------------------*/
 
