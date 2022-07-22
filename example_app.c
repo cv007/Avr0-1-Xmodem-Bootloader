@@ -6,12 +6,18 @@
     build with ld option-
         -Wl,-section-start=.text=0x400
         (byte address 0x800, word address 0x400)
+        this value will match what the bootloader BL_SIZE value is set to
+        in terms of a byte address (in this case 2048 -> 0x800 -> 0x400 word)
 
+    the following commands assume the program arguments are in the current
+    directory, or in the path environment variable, and the file arguments
+    are in the current directory, change as needed for your own needs
+    
     convert elf to bin format for xmodem use-
-    avr-objcopy -binary my_project.elf -O my_project.bin
+    $ avr-objcopy -binary my_project.elf -O my_project.bin
 
     Linux command line-
-    $ stty -F /dev/ttyACM1 115200
+    $ stty -F /dev/ttyACM1 230400
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
 
     this example also allows using the pc to reset the mcu via the rx pin
@@ -28,7 +34,7 @@
     does not require programming (just power up again without sw pressed)
 
     Linux command line (first trigger rx pin by sending 0xFF)-
-    $ stty -F /dev/ttyACM1 115200
+    $ stty -F /dev/ttyACM1 230400
     $ printf "\xFF" > /dev/ttyACM1
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
 -----------------------------------------------------------------------------*/
