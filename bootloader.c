@@ -67,6 +67,7 @@
 #include <util/delay.h>
 
 
+
 // --- [2] ---
                 //for an atmega4809, but close enough for the timy3217
 FUSES           = {
@@ -137,24 +138,24 @@ UartRx          = { &PORTB, 3, 0 }; //onVal value unimportant
 UartAltPins     (){} // { PORTMUX.USARTROUTEA |= 1<<0; /*mega0 USART0 alt pins*/ }
 
 
-
                 //constants
 
-                static const uint8_t
-NACK            = 0x15;
-                static const uint8_t
-ACK             = 0x06;
-                static const uint8_t
-SOH             = 0x01;
-                static const uint8_t
-EOT             = 0x04;
-                static const uint8_t
-PING            = XMODEM_CRC ? 'C' : 0x15; // C or NACK
+                enum { //xmodem chars
+NACK            = 0x15,
+ACK             = 0x06,
+SOH             = 0x01,
+EOT             = 0x04,
+PING            = XMODEM_CRC ? 'C' : 0x15 // C or NACK
+                };
+
+                enum {
+XMODEM_DATA_SIZE = 128
+                };
 
                 //vars
 
                 uint8_t
-xmodemData      [128]; //storage for an xmodem data packet (always 128 in size)
+xmodemData      [XMODEM_DATA_SIZE]; //storage for an xmodem data packet (always 128 in size)
 
 
                 //functions
@@ -183,22 +184,28 @@ ledTog          ()
 
                 static void
 softReset       () { CCP = 0xD8; RSTCTRL.SWRR = 1; } //software reset
+
                 static void
-writePage       () { CCP = 0x9D; NVMCTRL.CTRLA = 3; } //ERWP, erase page, write page buffer
+nvmWrite        ()
+                {
+                CCP = 0x9D;
+                NVMCTRL.CTRLA = 3; //ERWP
+                }
+
                 static bool
 isRxActive      () { return UartRx.port->INTFLAGS & (1<<UartRx.pin); } //we enabled falling edge sense, so any rx will set the rx intflag
 
                 static bool
 entryCheck      ()
                 { //return true if we want to stay in bootloader
-                //if last eeprom byte is erased, or if sw is pressed, return true
+                //if last eeprom byte is erased or sw is pressed, return true
                 return *(volatile uint8_t*)EEPROM_END == 0xFF || swIsOn();
                 }
 
                 static void
 init            ()
                 {
-                CCP = 0xD8; CLKCTRL.MCLKCTRLB = 1; //prescale enable, div2
+                CCP = 0xD8; CLKCTRL.MCLKCTRLB = 1; //prescale enable, div2 (8Mhz or 10Mhz)
                 Uart->BAUD = F_CPU*4/UART_BAUD;
                 Uart->CTRLB = 0xC0; //RXEN,TXEN
                 UartTx.port->DIRSET = 1<<UartTx.pin; //output
@@ -251,7 +258,7 @@ xmodem          ()
 crc16           () //crc the packetData array
                 {
                 uint16_t crc = 0;
-                for( uint8_t i = 0; i < sizeof xmodemData; i++ ){
+                for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ){
                     crc = crc ^ (xmodemData[i] << 8);
                     for( uint8_t j = 0; j < 8; j++ ){
                         bool b15 = crc & 0x8000;
@@ -270,7 +277,7 @@ xmodem          ()
                     while( c = read(), c != SOH && c != EOT ){} //wait for SOH or EOT
                     if( c == EOT ) return false;
                     uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
-                    for( uint8_t i = 0; i < 128; i++ ) xmodemData[i] = read();
+                    for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ) xmodemData[i] = read();
                     uint16_t crc = (read()<<8) + read(); //2 bytes, H,L
                     if( crc == crc16() && blockSum == 255 ) break;
                     write(NACK); //bad checksum or block# pair not a match
@@ -302,16 +309,16 @@ programApp      ()
                     uint8_t i = 0;
                     uint8_t pg = 0;
                     //also handle avr0/1 with page size < 128 (64 is the only other lower value)
-                    while( i < sizeof xmodemData ){ //128
+                    while( i < XMODEM_DATA_SIZE ){ //128
                         flashPtr[i] = xmodemData[i]; //write to page buffer
                         i++;
                         if( ++pg < MAPPED_PROGMEM_PAGE_SIZE ) continue;
-                        writePage();
+                        nvmWrite();
                         pg = 0;
                         }
                     i = 0;
-                    while( (flashPtr[i] == xmodemData[i]) && (++i < 128) ){} //verify
-                    if( i == 128 ){ write( ACK ); flashPtr += 128; }
+                    while( (flashPtr[i] == xmodemData[i]) && (++i < XMODEM_DATA_SIZE) ){} //verify
+                    if( i == XMODEM_DATA_SIZE ){ write( ACK ); flashPtr += XMODEM_DATA_SIZE; }
                     else write( NACK );
                     //if flash write failure- instead of retrying flash write on our own (we have the data),
                     //let the sender know there is an error so it is informed
@@ -324,14 +331,13 @@ programApp      ()
 eeAppOK         ()
                 {
                 *(volatile uint8_t*)EEPROM_END = 0; //write to eeprom page buffer, last eeprom byte
-                writePage(); //write eeprom (!0xFF signifies to bootloader that flash is programmed)
+                nvmWrite(); //write eeprom (!0xFF signifies to bootloader that flash is programmed)
                 while( NVMCTRL.STATUS & 2 ){} //ee is busy
                 }
 
                 int
 main            (void)
                 {
-
                 //check if bootloader needs to run, true=run, false=jump to app
                 //convert BL_SIZE to flash address mapped into data space
                 //goto will result in a jmp instruction, so can use BL_SIZE as-is (byte address)
@@ -344,5 +350,4 @@ main            (void)
                 while( swIsOn() ){}     //in case sw still pressed, wait for release
                 softReset();
                 while(1){}
-
                 }
