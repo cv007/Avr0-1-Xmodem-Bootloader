@@ -1,8 +1,8 @@
 /*-----------------------------------------------------------------------------
-    example_app.c (loaded via bootloader) - 
+    example_app.c (loaded via bootloader) -
       blink an led, allow resetting back into bootloader via switch or via
       rx falling edge (from a pc)
-    
+
     build with ld option-
         -Wl,-section-start=.text=0x400
         (byte address 0x800, word address 0x400)
@@ -12,7 +12,7 @@
     the following commands assume the program arguments are in the current
     directory, or in the path environment variable, and the file arguments
     are in the current directory, change as needed for your own needs
-    
+
     convert elf to bin format for xmodem use-
     $ avr-objcopy -binary my_project.elf -O my_project.bin
 
@@ -87,7 +87,7 @@ eeBLsignal      ()
 
                 //both pin irq's are on same port, so only PORTB isr
                 __attribute(( signal, used )) void
-PORTB_PORT_vect()
+PORTB_PORT_vect ()
                 {
                 uint8_t flags = PORTB.INTFLAGS; //both Sw and UartRx flags
                 PORTB.INTFLAGS = flags; //clear in case not our pin
