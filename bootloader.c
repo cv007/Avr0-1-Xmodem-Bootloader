@@ -128,7 +128,7 @@ Sw              = { &PORTB, 7, 1<<0, 0 };
                   alternate pin rx | A2
 
                   asuming only usart will be used, to set alt pins-
-                  PORTMUX.CTRLB = 1;                 
+                  PORTMUX.CTRLB = 1;
                 -----------------------------------------------------------*/
 
 
@@ -168,7 +168,7 @@ eeLastBytePtr   = (volatile uint8_t*)EEPROM_END;
                 static void* const
 appStartAddr    = (void*)BL_SIZE;
                 static volatile uint8_t* const
-flashMemStart   = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE);
+appMemStart     = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE);
 
                 //vars
 
@@ -207,7 +207,12 @@ softReset       () { CCP = 0xD8; RSTCTRL.SWRR = 1; }
 nvmWrite        () { CCP = 0x9D; NVMCTRL.CTRLA = 3; } //ERWP
 
                 static bool //we enabled falling edge sense, so any rx will set the rx intflag
-isRxActive      () { return UartRx.port->INTFLAGS & UartRx.pinbm; }
+isRxActive      () //will clear flag, so can also use to just clear flag
+                {  //(in case needed more than once)
+                bool flag = UartRx.port->INTFLAGS & UartRx.pinbm;
+                UartRx.port->INTFLAGS = UartRx.pinbm; //clear
+                return flag;
+                }
 
                 static bool //return true if we want to stay in bootloader
 entryCheck      () { return *eeLastBytePtr == 0xFF || swIsOn(); }
@@ -224,24 +229,59 @@ init            ()
                 }
 
                 static void
-write           (const char c)
+uwrite          (const char c)
                 {
                 while( (Uart->STATUS & 0x20) == 0 ){} //DREIF
                 Uart->TXDATAL = c;
                 }
 
                 static uint8_t
-read            ()
+uread           ()
                 {
                 while ( (Uart->STATUS & 0x80) == 0 ){} //RXC
                 return Uart->RXDATAL;
                 }
 
+                static void
+dumpMem         (uint16_t addr, uint16_t size){
+                uwrite( addr & 0xFF ); //header- addrL addrH sizeL sizeH
+                uwrite( addr >> 8 );
+                uwrite( size & 0xFF );
+                uwrite( size >>8 );
+                volatile uint8_t* ptr = (volatile uint8_t*)addr; 
+                while( size-- ) uwrite(*ptr++);
+                }
+                static void
+dumpFlash       () { dumpMem( MAPPED_PROGMEM_START, MAPPED_PROGMEM_SIZE ); }
+                static void
+dumpEeprom      () { dumpMem( MAPPED_EEPROM_START, MAPPED_EEPROM_SIZE ); }
+                static void
+dumpFuses       () { dumpMem( FUSES_START, FUSE_MEMORY_SIZE ); }
+                static void
+dumpSigrow      () { dumpMem( (uint16_t)&SIGROW, sizeof(SIGROW_t) ); }
+
+                static void
+Xbroadcast      ()
+                {
+                //the other end expects a NACK or 'C' (xmodem crc) when we are ready
+                //we do not know if sender is ready yet (may not see our C),
+                //so to get things started send out a C (PING) every second or so until
+                //we see the first rx start bit
+                while(1){
+                    ledTog(); //blink when waiting for sender
+                    uwrite( X_PING );
+                    uint32_t t = F_CPU/10; //count to wait (while loop about 10 clocks)
+                    bool rx;
+                    while( rx = isRxActive(), t-- && !rx ){}
+                    if( rx ) break;
+                    }
+                }
+
                 static uint16_t
-crc16           (uint16_t crc, uint8_t v) 
+crc16           (uint16_t crc, uint8_t v)
                 {
                 crc = crc ^ (v << 8);
-                for( uint8_t j = 0; j < 8; j++ ){
+                for( uint8_t i = 0; i < 8; i++ ){
                     bool b15 = crc & 0x8000;
                     crc <<= 1;
                     if (b15) crc ^= 0x1021;
@@ -255,37 +295,29 @@ xmodem          () //we let caller ack when its ready for more data
                 while(1){
                     uint8_t c;
                     uint16_t crc = 0;
-                    while( c = read(), c != X_SOH && c != X_EOT ){} //wait for SOH or EOT
+                    c = uread();
                     if( c == X_EOT ) return false;
-                    uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
+                    if( c != X_SOH ) continue;
+                    //X_SOH seen
+                    uint8_t blockSum = uread() + uread(); //block#,block#inv, sum should be 255
                     for( uint8_t i = 0; i < X_DATA_SIZE; i++ ){
-                        uint8_t v = read();
+                        uint8_t v = uread();
                         xmodemData[i] = v;
                         crc = crc16( crc, v );
                         }
-                    if( crc == ((read()<<8u) + read()) && blockSum == 255 ) break;
-                    write( X_NACK ); //bad checksum or block# pair not a match
-                    }                
+                    if( crc == ((uread()<<8u) + uread()) && blockSum == 255 ) break;
+                    uwrite( X_NACK ); //bad checksum or block# pair not a match
+                    }
                 return true;
                 }
 
                 static void
 programApp      ()
                 {
-                //the other end expects a NACK or 'C' (xmodem crc) when we are ready
-                //we do not know if sender is ready yet (may not see our C/NACK),
-                //so to get things started send out a C/NACK (PING) every second or so until
-                //we see the first rx start bit
-                while(1){
-                    ledTog(); //blink when waiting for sender
-                    write( X_PING );
-                    uint32_t t = F_CPU/10; //count to wait (while loop about 10 clocks)
-                    while( t-- && !isRxActive() ){}
-                    if( isRxActive() ) break;
-                    }
+                Xbroadcast(); //let other end know we are here
                 ledOn(); //on when xmodem active (probably will not see for very long)
-                volatile uint8_t* flashPtr = flashMemStart;
-                while( xmodem() ){
+                volatile uint8_t* flashPtr = appMemStart;
+                while( xmodem() ){ //returns false when EOT seen
                     uint8_t i = 0;
                     uint8_t pbc = 0; //page buffer count
                     //also handle avr0/1 with page size < 128 (64 is the only other lower value)
@@ -298,16 +330,14 @@ programApp      ()
                         }
                     i = 0;
                     while( (flashPtr[i] == xmodemData[i]) && (++i < X_DATA_SIZE) ){} //verify
-                    if( i == X_DATA_SIZE ){ 
-                        write( X_ACK ); 
-                        flashPtr += X_DATA_SIZE; 
-                        } 
-                    else write( X_NACK );
+                    if( i != X_DATA_SIZE ){ uwrite( X_NACK ); continue; }
+                    uwrite( X_ACK ); //ok
+                    flashPtr += X_DATA_SIZE; //next page
                     //if flash write failure- instead of retrying flash write on our own (we already have the data),
                     //let the sender know there is an error so it is informed
                     //(it will send the data again, the sender will decide when/whether its time to give up)
                     }
-                write( X_ACK ); //ack the EOT
+                uwrite( X_ACK ); //ack the EOT
                 }
 
                 static void
@@ -331,6 +361,10 @@ main            (void)
                 init();
                 programApp();
                 eeAppOK();              //mark that app is programmed
+                dumpSigrow();           //dump sigrow, fuses, flash, eeprom
+                dumpFuses();            //can use to verify flash or check
+                dumpFlash();            //other things- device id, fuses, etc.
+                dumpEeprom();           //
                 while( swIsOn() ){}     //in case sw still pressed, wait for release
                 softReset();
 
