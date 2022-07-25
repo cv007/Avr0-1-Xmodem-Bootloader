@@ -1,4 +1,3 @@
-
 /*-----------------------------------------------------------------------------
     blink_app (loaded via bootloader)
     build with ld option-
@@ -9,26 +8,40 @@
     avr-objcopy -binary my_project.elf -O my_project.bin
 
     Linux command line-
-    $ stty -F /dev/ttyACM1 115200
+    $ stty -F /dev/ttyACM1 230400
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
 
     this example also allows using the pc to reset the mcu via the rx pin
     if any falling edge seen on the rx pin or the sw pin, the port irq will
-    fire and either software reset (sw) or first erase the last byte in eeprom (rx)
+    fire and either software reset (sw) or first erase the last byte in 
+    eeprom (rx)
 
     if the sw pin is triggered, it will remain pressed long enough for the 
     bootloader to see, and will remain in the bootloader
 
     if the rx pin is triggered (via pc), we wil need to erase the last byte in 
     eeprom so the bootloader does not jump to the app
-    this method will require the bootloader to load an app as the eeprom byte will
-    need to be set before the bootloader will jump to an app again, where the sw pin
-    does not require programming (just power up again without sw pressed)
+    this method will require the bootloader to load an app (or simply have the
+    xmodem send a null file so an EOT is seen by the mcu) as the eeprom byte 
+    will need to be set before the bootloader will jump to an app again, where 
+    the sw pin method does not require programming (just power up again without 
+    sw pressed)
 
     Linux command line (first trigger rx pin by sending 0xFF)-
-    $ stty -F /dev/ttyACM1 115200
+    $ stty -F /dev/ttyACM1 230400
     $ printf "\xFF" > /dev/ttyACM1
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
+
+    the mcu will dump out sigrow, fuse, flash, eeprom data after programming
+    and you can do whatever you wish with this data
+    if you want to just get the data dump, have the xmodem software send a
+    blank file-
+    $ sx /dev/null < /dev/ttyACM1 > /dev/ttyACM1
+    and then capture the dump data (not shown here how to do that)
+
+    the format of the binary data dump is-
+        addressL addressH lengthL lengthH data[0] ... data[length-1]
+        where the addresses are memory mapped addresses
 -----------------------------------------------------------------------------*/
 
 #include <avr/io.h>
