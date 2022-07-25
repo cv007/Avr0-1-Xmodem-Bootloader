@@ -1,5 +1,5 @@
 /*-----------------------------------------------------------------------------
-    xmodem / xmodem-crc bootloader for avr0/1
+    xmodem-crc bootloader for avr0/1
 
     ATtiny3217 Curiosity Nano in use here
 
@@ -7,7 +7,6 @@
     set user specified defines-
         cpu speed- 16 or 20MHz
         bootloader size
-        xmodem-crc or normal xmodem
         uart baud rate
 
     --- [2] ---
@@ -39,7 +38,6 @@
 //=============================================================================
 #define FREQSEL     2           // OSC20M speed- 1==16MHz, 2=20MHz
 #define BL_SIZE     2048        // value divisible by 256, used in FUSES
-#define XMODEM_CRC  1           // 1=xmodem-crc, 0=standard xmodem
 #define UART_BAUD   230400      // will be checked to see if possible
 //=============================================================================
 
@@ -132,13 +130,10 @@ Uart            = &USART0;
 UartTx          = { &PORTB, 2, 1<<2, 0 }; //onVal value unimportant
                 static const pin_t
 UartRx          = { &PORTB, 3, 1<<3, 0 }; //onVal value unimportant
-
                 //set function to handle enabling the alternate pins if needed
                 //else leave as a blank function
                 static void
 UartAltPins     (){} // { PORTMUX.USARTROUTEA |= 1<<0; /*mega0 USART0 alt pins*/ }
-
-
 
 
                 // enums
@@ -148,31 +143,25 @@ NACK            = 0x15,
 ACK             = 0x06,
 SOH             = 0x01,
 EOT             = 0x04,
-PING            = XMODEM_CRC ? 'C' : 0x15 // C or NACK
+PING            = 'C' //to host, C = xmodem-crc (NACK = normal xmodem)
                 };
-
                 enum {
 XMODEM_DATA_SIZE = 128
                 };
-
 
                 // constants
 
                 static volatile uint8_t* const
 eeLastBytePtr   = (volatile uint8_t*)EEPROM_END;
-
                 static void* const
 appStartAddr    = (void*)BL_SIZE;
-
                 static volatile uint8_t* const
 flashMemStart   = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE);
-
 
                 //vars
 
                 uint8_t
 xmodemData      [XMODEM_DATA_SIZE]; //storage for an xmodem data packet (always 128 in size)
-
 
                 //functions
 
@@ -191,6 +180,7 @@ ledOn           ()
                 if(Led.onVal) Led.port->OUTSET = Led.pinbm;
                 else Led.port->OUTCLR = Led.pinbm;
                 }
+
                 static void
 ledTog          ()
                 {
@@ -199,7 +189,11 @@ ledTog          ()
                 }
 
                 static void
-softReset       () { CCP = 0xD8; RSTCTRL.SWRR = 1; } //software reset
+softReset       () //software reset
+                {
+                CCP = 0xD8;
+                RSTCTRL.SWRR = 1;
+                }
 
                 static void
 nvmWrite        ()
@@ -208,13 +202,15 @@ nvmWrite        ()
                 NVMCTRL.CTRLA = 3; //ERWP
                 }
 
-                static bool
-isRxActive      () { return UartRx.port->INTFLAGS & UartRx.pinbm; } //we enabled falling edge sense, so any rx will set the rx intflag
+                static bool //we enabled falling edge sense, so any rx will set the rx intflag
+isRxActive      ()
+                {
+                return UartRx.port->INTFLAGS & UartRx.pinbm;
+                }
 
-                static bool
-entryCheck      ()
-                { //return true if we want to stay in bootloader
-                //if last eeprom byte is erased or sw is pressed, return true
+                static bool //return true if we want to stay in bootloader
+entryCheck      () //if last eeprom byte is erased or sw is pressed, return true
+                {
                 return *eeLastBytePtr == 0xFF || swIsOn();
                 }
 
@@ -235,40 +231,13 @@ write           (const char c)
                 while( (Uart->STATUS & 0x20) == 0 ){} //DREIF
                 Uart->TXDATAL = c;
                 }
+
                 static uint8_t
 read            ()
                 {
                 while ( (Uart->STATUS & 0x80) == 0 ){} //RXC
                 return Uart->RXDATAL;
                 }
-
-                //=================================================================
-                #if !XMODEM_CRC //simple checksum
-
-                static bool
-xmodem          ()
-                {
-                while(1){
-                    uint8_t c;
-                    while( c = read(), c != SOH && c != EOT ){} //wait for SOH or EOT
-                    if( c == EOT ) return false;
-                    uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
-                    uint8_t checksum = 0;
-                    for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ){
-                        c = read();
-                        packetData[i] = c;
-                        checksum += c;
-                        }
-                    if( read() == checksum && blockSum == 255 ) break;
-                    write(NACK); //bad checksum or block# pair not a match
-                    }
-                //we let caller ack when its ready for more data
-                return true;
-                }
-
-                //=================================================================
-                #else //xmodem-crc, checksum is now 2 bytes
-                //=================================================================
 
                 static uint16_t
 crc16           () //crc the packetData array
@@ -294,16 +263,13 @@ xmodem          ()
                     if( c == EOT ) return false;
                     uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
                     for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ) xmodemData[i] = read();
-                    uint16_t crc = (read()<<8) + read(); //2 bytes, H,L
+                    uint16_t crc = (read()<<8u) + read(); //2 bytes, H,L
                     if( crc == crc16() && blockSum == 255 ) break;
                     write(NACK); //bad checksum or block# pair not a match
                     }
                 //we let caller ack when its ready for more data
                 return true;
                 }
-
-                #endif
-                //=================================================================
 
                 static void
 programApp      ()
@@ -314,7 +280,7 @@ programApp      ()
                 //we see the first rx start bit
                 while(1){
                     ledTog(); //blink when waiting for sender
-                    write(PING);
+                    write( PING );
                     uint32_t t = F_CPU/10; //count to wait (while loop about 10 clocks)
                     while( t-- && !isRxActive() ){}
                     if( isRxActive() ) break;
