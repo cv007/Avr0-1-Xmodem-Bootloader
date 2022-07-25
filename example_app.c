@@ -70,12 +70,9 @@ init            ()
                 asm("sei");
                 }
 
-                static void
-nvmWrite        () //ERWP, erase page, write page buffer
-                {
-                CCP = 0x9D;
-                NVMCTRL.CTRLA = 3; //ERWP
-                }
+                static void //ERWP, erase page, write page buffer
+nvmWrite        () { CCP = 0x9D; NVMCTRL.CTRLA = 3; } //ERWP
+
 
                 static void
 eeAppOK         ()
@@ -99,11 +96,7 @@ PORTB_PORT_vect()
                 }
 
                 static void
-ledTog          ()
-                {
-                Led.port->DIRSET = Led.pinbm;
-                Led.port->OUTTGL = Led.pinbm;
-                }
+ledTog          () { Led.port->DIRSET = Led.pinbm; Led.port->OUTTGL = Led.pinbm; }
 
                 int
 main            (void)
