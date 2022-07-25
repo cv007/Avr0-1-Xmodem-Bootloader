@@ -86,6 +86,7 @@ FUSES           = {
                 typedef struct {
                     PORT_t* port;
                     uint8_t pin;
+                    uint8_t pinbm;
                     bool onVal;
                     }
 pin_t           ;
@@ -94,9 +95,9 @@ pin_t           ;
                 //our pins- Led and Sw
 
                 static const pin_t
-Led             = { &PORTA, 3, 0 };
+Led             = { &PORTA, 3, 1<<3, 0 };
                 static const pin_t
-Sw              = { &PORTB, 7, 0 };
+Sw              = { &PORTB, 7, 1<<0, 0 };
 
                 /*-----------------------------------------------------------
                     reference for uart pins, any avr0/1
@@ -128,9 +129,9 @@ Sw              = { &PORTB, 7, 0 };
                 static USART_t* const
 Uart            = &USART0;
                 static const pin_t
-UartTx          = { &PORTB, 2, 0 }; //onVal value unimportant
+UartTx          = { &PORTB, 2, 1<<2, 0 }; //onVal value unimportant
                 static const pin_t
-UartRx          = { &PORTB, 3, 0 }; //onVal value unimportant
+UartRx          = { &PORTB, 3, 1<<3, 0 }; //onVal value unimportant
 
                 //set function to handle enabling the alternate pins if needed
                 //else leave as a blank function
@@ -138,7 +139,9 @@ UartRx          = { &PORTB, 3, 0 }; //onVal value unimportant
 UartAltPins     (){} // { PORTMUX.USARTROUTEA |= 1<<0; /*mega0 USART0 alt pins*/ }
 
 
-                //constants
+
+
+                // enums
 
                 enum { //xmodem chars
 NACK            = 0x15,
@@ -151,6 +154,19 @@ PING            = XMODEM_CRC ? 'C' : 0x15 // C or NACK
                 enum {
 XMODEM_DATA_SIZE = 128
                 };
+
+
+                // constants
+
+                static volatile uint8_t* const
+eeLastBytePtr   = (volatile uint8_t*)EEPROM_END;
+
+                static void* const
+appStartAddr    = (void*)BL_SIZE;
+
+                static volatile uint8_t* const
+flashMemStart   = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE);
+
 
                 //vars
 
@@ -171,15 +187,15 @@ swIsOn          ()
                 static void
 ledOn           ()
                 {
-                Led.port->DIRSET = 1<<Led.pin;
-                if(Led.onVal) Led.port->OUTSET = 1<<Led.pin;
-                else Led.port->OUTCLR = 1<<Led.pin;
+                Led.port->DIRSET = Led.pinbm;
+                if(Led.onVal) Led.port->OUTSET = Led.pinbm;
+                else Led.port->OUTCLR = Led.pinbm;
                 }
                 static void
 ledTog          ()
                 {
-                Led.port->DIRSET = 1<<Led.pin;
-                Led.port->OUTTGL = 1<<Led.pin;
+                Led.port->DIRSET = Led.pinbm;
+                Led.port->OUTTGL = Led.pinbm;
                 }
 
                 static void
@@ -193,13 +209,13 @@ nvmWrite        ()
                 }
 
                 static bool
-isRxActive      () { return UartRx.port->INTFLAGS & (1<<UartRx.pin); } //we enabled falling edge sense, so any rx will set the rx intflag
+isRxActive      () { return UartRx.port->INTFLAGS & UartRx.pinbm; } //we enabled falling edge sense, so any rx will set the rx intflag
 
                 static bool
 entryCheck      ()
                 { //return true if we want to stay in bootloader
                 //if last eeprom byte is erased or sw is pressed, return true
-                return *(volatile uint8_t*)EEPROM_END == 0xFF || swIsOn();
+                return *eeLastBytePtr == 0xFF || swIsOn();
                 }
 
                 static void
@@ -208,7 +224,7 @@ init            ()
                 CCP = 0xD8; CLKCTRL.MCLKCTRLB = 1; //prescale enable, div2 (8Mhz or 10Mhz)
                 Uart->BAUD = F_CPU*4/UART_BAUD;
                 Uart->CTRLB = 0xC0; //RXEN,TXEN
-                UartTx.port->DIRSET = 1<<UartTx.pin; //output
+                UartTx.port->DIRSET = UartTx.pinbm; //output
                 (&UartRx.port->PIN0CTRL)[UartRx.pin] = 0x08|0x03; //pullup, falling edge sense
                 UartAltPins(); //function to handle alternate pins if needed
                 }
@@ -222,7 +238,7 @@ write           (const char c)
                 static uint8_t
 read            ()
                 {
-                while ( (Uart->STATUS & 0x80) == 0 ){}
+                while ( (Uart->STATUS & 0x80) == 0 ){} //RXC
                 return Uart->RXDATAL;
                 }
 
@@ -238,7 +254,7 @@ xmodem          ()
                     if( c == EOT ) return false;
                     uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
                     uint8_t checksum = 0;
-                    for( uint8_t i = 0; i < 128; i++ ){
+                    for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ){
                         c = read();
                         packetData[i] = c;
                         checksum += c;
@@ -304,17 +320,17 @@ programApp      ()
                     if( isRxActive() ) break;
                     }
                 ledOn(); //on when xmodem active (probably will not see for very long)
-                volatile uint8_t* flashPtr = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE); //start of app (data mapped address)
+                volatile uint8_t* flashPtr = flashMemStart;
                 while( xmodem() ){
                     uint8_t i = 0;
-                    uint8_t pg = 0;
+                    uint8_t pbc = 0; //page buffer count
                     //also handle avr0/1 with page size < 128 (64 is the only other lower value)
                     while( i < XMODEM_DATA_SIZE ){ //128
                         flashPtr[i] = xmodemData[i]; //write to page buffer
                         i++;
-                        if( ++pg < MAPPED_PROGMEM_PAGE_SIZE ) continue;
-                        nvmWrite();
-                        pg = 0;
+                        if( ++pbc < MAPPED_PROGMEM_PAGE_SIZE ) continue;
+                        nvmWrite(); //end of page, write page buffer
+                        pbc = 0; //reset page buffer count
                         }
                     i = 0;
                     while( (flashPtr[i] == xmodemData[i]) && (++i < XMODEM_DATA_SIZE) ){} //verify
@@ -330,7 +346,7 @@ programApp      ()
                 static void
 eeAppOK         ()
                 {
-                *(volatile uint8_t*)EEPROM_END = 0; //write to eeprom page buffer, last eeprom byte
+                *eeLastBytePtr = 0; //write to eeprom page buffer, last eeprom byte
                 nvmWrite(); //write eeprom (!0xFF signifies to bootloader that flash is programmed)
                 while( NVMCTRL.STATUS & 2 ){} //ee is busy
                 }
@@ -340,8 +356,8 @@ main            (void)
                 {
                 //check if bootloader needs to run, true=run, false=jump to app
                 //convert BL_SIZE to flash address mapped into data space
-                //goto will result in a jmp instruction, so can use BL_SIZE as-is (byte address)
-                if( entryCheck() == false ) goto *( (void*)BL_SIZE );
+                //goto will result in a jmp instruction so can use byte address
+                if( entryCheck() == false ) goto *appStartAddr;
 
                 //we are now officially a bootloader
                 init();
