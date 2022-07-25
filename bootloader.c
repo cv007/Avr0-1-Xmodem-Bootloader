@@ -238,16 +238,13 @@ read            ()
                 }
 
                 static uint16_t
-crc16           () //crc the packetData array
+crc16           (uint16_t crc, uint8_t v) 
                 {
-                uint16_t crc = 0;
-                for( uint8_t i = 0; i < X_DATA_SIZE; i++ ){
-                    crc = crc ^ (xmodemData[i] << 8);
-                    for( uint8_t j = 0; j < 8; j++ ){
-                        bool b15 = crc & 0x8000;
-                        crc <<= 1;
-                        if (b15) crc ^= 0x1021;
-                        }
+                crc = crc ^ (v << 8);
+                for( uint8_t j = 0; j < 8; j++ ){
+                    bool b15 = crc & 0x8000;
+                    crc <<= 1;
+                    if (b15) crc ^= 0x1021;
                     }
                 return crc;
                 }
@@ -257,12 +254,16 @@ xmodem          () //we let caller ack when its ready for more data
                 {
                 while(1){
                     uint8_t c;
+                    uint16_t crc = 0;
                     while( c = read(), c != X_SOH && c != X_EOT ){} //wait for SOH or EOT
                     if( c == X_EOT ) return false;
                     uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
-                    for( uint8_t i = 0; i < X_DATA_SIZE; i++ ) xmodemData[i] = read();
-                    uint16_t crc = (read()<<8u) + read(); //2 bytes, H,L
-                    if( crc == crc16() && blockSum == 255 ) break;
+                    for( uint8_t i = 0; i < X_DATA_SIZE; i++ ){
+                        uint8_t v = read();
+                        xmodemData[i] = v;
+                        crc = crc16( crc, v );
+                        }
+                    if( crc == ((read()<<8u) + read()) && blockSum == 255 ) break;
                     write( X_NACK ); //bad checksum or block# pair not a match
                     }                
                 return true;
