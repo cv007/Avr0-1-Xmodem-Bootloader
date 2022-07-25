@@ -247,7 +247,7 @@ dumpMem         (uint16_t addr, uint16_t size){
                 uwrite( addr & 0xFF ); //header- addrL addrH sizeL sizeH
                 uwrite( addr >> 8 );
                 uwrite( size & 0xFF );
-                uwrite( size >>8 );
+                uwrite( size >> 8 );
                 volatile uint8_t* ptr = (volatile uint8_t*)addr; 
                 while( size-- ) uwrite(*ptr++);
                 }
