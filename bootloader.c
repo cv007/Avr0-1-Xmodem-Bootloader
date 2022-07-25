@@ -215,7 +215,7 @@ isRxActive      () //will clear flag, so can also use to just clear flag
                 }
 
                 static bool //return true if we want to stay in bootloader
-entryCheck      () { return *eeLastBytePtr == 0xFF || swIsOn(); }
+entryCheck      () { return *eeLastBytePtr == 0xFF || swIsOn() || *appMemStart == 0xFF; }
 
                 static void
 init            ()
