@@ -35,11 +35,10 @@
 
 
 // --- [1] ---
-//=============================================================================
 #define FREQSEL     2           // OSC20M speed- 1==16MHz, 2=20MHz
 #define BL_SIZE     2048        // value divisible by 256, used in FUSES
 #define UART_BAUD   230400      // will be checked to see if possible
-//=============================================================================
+// ----------
 
 
 //=============================================================================
@@ -78,6 +77,7 @@ FUSES           = {
                 //boot starts at 0, goes up to bootend, app starts at bootend
                 .BOOTEND = BL_SIZE/256, // BOOTEND
                 };
+// ----------
 
 
                 //pins type
@@ -89,6 +89,7 @@ FUSES           = {
                     }
 pin_t           ;
 
+
 // --- [3] ---
                 //our pins- Led and Sw
 
@@ -96,17 +97,23 @@ pin_t           ;
 Led             = { &PORTA, 3, 1<<3, 0 };
                 static const pin_t
 Sw              = { &PORTB, 7, 1<<0, 0 };
+// ----------
+
 
                 /*-----------------------------------------------------------
                     reference for uart pins, any avr0/1
 
-                    -avr0 mega-
+                    -avr0 mega- (availability depends on mega0 pin count)
                              usart | 0   1   2   3
                               port | A   C   F   B
                     default pin tx | A0  C0  F0  B0
                     default pin rx | A1  C1  F1  B1
                   alternate pin tx | A4  C4  F4  B4
                   alternate pin rx | A5  C5  F5  B5
+
+                  asuming only 1 usart will be used, to set alt pins-
+                  PORTMUX.USARTROUTEA = 1<<(N*2); // N = 0-3
+
 
                     -avr0/1 tiny (usart0 only)-
                     default pin tx | B2
@@ -119,7 +126,11 @@ Sw              = { &PORTB, 7, 1<<0, 0 };
                     default pin rx | A7
                   alternate pin tx | A1
                   alternate pin rx | A2
+
+                  asuming only usart will be used, to set alt pins-
+                  PORTMUX.CTRLB = 1;                 
                 -----------------------------------------------------------*/
+
 
 // --- [4] ---
                 //uart info
@@ -133,20 +144,21 @@ UartRx          = { &PORTB, 3, 1<<3, 0 }; //onVal value unimportant
                 //set function to handle enabling the alternate pins if needed
                 //else leave as a blank function
                 static void
-UartAltPins     (){} // { PORTMUX.USARTROUTEA |= 1<<0; /*mega0 USART0 alt pins*/ }
+UartAltPins     (){} // { PORTMUX.USARTROUTEA = 1<<0; /*mega0 USART0 alt pins*/ }
+// ----------
 
 
                 // enums
 
                 enum { //xmodem chars
-NACK            = 0x15,
-ACK             = 0x06,
-SOH             = 0x01,
-EOT             = 0x04,
-PING            = 'C' //to host, C = xmodem-crc (NACK = normal xmodem)
+X_NACK          = 0x15,
+X_ACK           = 0x06,
+X_SOH           = 0x01,
+X_EOT           = 0x04,
+X_PING          = 'C' //to host, C = xmodem-crc (NACK = normal xmodem)
                 };
                 enum {
-XMODEM_DATA_SIZE = 128
+X_DATA_SIZE     = 128
                 };
 
                 // constants
@@ -161,7 +173,7 @@ flashMemStart   = (volatile uint8_t*)(MAPPED_PROGMEM_START|BL_SIZE);
                 //vars
 
                 uint8_t
-xmodemData      [XMODEM_DATA_SIZE]; //storage for an xmodem data packet (always 128 in size)
+xmodemData      [X_DATA_SIZE]; //storage for an xmodem data packet (always 128 in size)
 
                 //functions
 
@@ -188,31 +200,17 @@ ledTog          ()
                 Led.port->OUTTGL = Led.pinbm;
                 }
 
-                static void
-softReset       () //software reset
-                {
-                CCP = 0xD8;
-                RSTCTRL.SWRR = 1;
-                }
+                static void //software reset
+softReset       () { CCP = 0xD8; RSTCTRL.SWRR = 1; }
 
                 static void
-nvmWrite        ()
-                {
-                CCP = 0x9D;
-                NVMCTRL.CTRLA = 3; //ERWP
-                }
+nvmWrite        () { CCP = 0x9D; NVMCTRL.CTRLA = 3; } //ERWP
 
                 static bool //we enabled falling edge sense, so any rx will set the rx intflag
-isRxActive      ()
-                {
-                return UartRx.port->INTFLAGS & UartRx.pinbm;
-                }
+isRxActive      () { return UartRx.port->INTFLAGS & UartRx.pinbm; }
 
                 static bool //return true if we want to stay in bootloader
-entryCheck      () //if last eeprom byte is erased or sw is pressed, return true
-                {
-                return *eeLastBytePtr == 0xFF || swIsOn();
-                }
+entryCheck      () { return *eeLastBytePtr == 0xFF || swIsOn(); }
 
                 static void
 init            ()
@@ -243,7 +241,7 @@ read            ()
 crc16           () //crc the packetData array
                 {
                 uint16_t crc = 0;
-                for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ){
+                for( uint8_t i = 0; i < X_DATA_SIZE; i++ ){
                     crc = crc ^ (xmodemData[i] << 8);
                     for( uint8_t j = 0; j < 8; j++ ){
                         bool b15 = crc & 0x8000;
@@ -255,19 +253,18 @@ crc16           () //crc the packetData array
                 }
 
                 static bool
-xmodem          ()
+xmodem          () //we let caller ack when its ready for more data
                 {
                 while(1){
                     uint8_t c;
-                    while( c = read(), c != SOH && c != EOT ){} //wait for SOH or EOT
-                    if( c == EOT ) return false;
+                    while( c = read(), c != X_SOH && c != X_EOT ){} //wait for SOH or EOT
+                    if( c == X_EOT ) return false;
                     uint8_t blockSum = read() + read(); //block#,block#inv, sum should be 255
-                    for( uint8_t i = 0; i < XMODEM_DATA_SIZE; i++ ) xmodemData[i] = read();
+                    for( uint8_t i = 0; i < X_DATA_SIZE; i++ ) xmodemData[i] = read();
                     uint16_t crc = (read()<<8u) + read(); //2 bytes, H,L
                     if( crc == crc16() && blockSum == 255 ) break;
-                    write(NACK); //bad checksum or block# pair not a match
-                    }
-                //we let caller ack when its ready for more data
+                    write( X_NACK ); //bad checksum or block# pair not a match
+                    }                
                 return true;
                 }
 
@@ -280,7 +277,7 @@ programApp      ()
                 //we see the first rx start bit
                 while(1){
                     ledTog(); //blink when waiting for sender
-                    write( PING );
+                    write( X_PING );
                     uint32_t t = F_CPU/10; //count to wait (while loop about 10 clocks)
                     while( t-- && !isRxActive() ){}
                     if( isRxActive() ) break;
@@ -291,7 +288,7 @@ programApp      ()
                     uint8_t i = 0;
                     uint8_t pbc = 0; //page buffer count
                     //also handle avr0/1 with page size < 128 (64 is the only other lower value)
-                    while( i < XMODEM_DATA_SIZE ){ //128
+                    while( i < X_DATA_SIZE ){ //128
                         flashPtr[i] = xmodemData[i]; //write to page buffer
                         i++;
                         if( ++pbc < MAPPED_PROGMEM_PAGE_SIZE ) continue;
@@ -299,14 +296,17 @@ programApp      ()
                         pbc = 0; //reset page buffer count
                         }
                     i = 0;
-                    while( (flashPtr[i] == xmodemData[i]) && (++i < XMODEM_DATA_SIZE) ){} //verify
-                    if( i == XMODEM_DATA_SIZE ){ write( ACK ); flashPtr += XMODEM_DATA_SIZE; }
-                    else write( NACK );
-                    //if flash write failure- instead of retrying flash write on our own (we have the data),
+                    while( (flashPtr[i] == xmodemData[i]) && (++i < X_DATA_SIZE) ){} //verify
+                    if( i == X_DATA_SIZE ){ 
+                        write( X_ACK ); 
+                        flashPtr += X_DATA_SIZE; 
+                        } 
+                    else write( X_NACK );
+                    //if flash write failure- instead of retrying flash write on our own (we already have the data),
                     //let the sender know there is an error so it is informed
-                    //(it will send the data again, the sender will decide when its time to give up)
+                    //(it will send the data again, the sender will decide when/whether its time to give up)
                     }
-                write(ACK); //ack the EOT
+                write( X_ACK ); //ack the EOT
                 }
 
                 static void
@@ -320,6 +320,7 @@ eeAppOK         ()
                 int
 main            (void)
                 {
+
                 //check if bootloader needs to run, true=run, false=jump to app
                 //convert BL_SIZE to flash address mapped into data space
                 //goto will result in a jmp instruction so can use byte address
@@ -331,5 +332,7 @@ main            (void)
                 eeAppOK();              //mark that app is programmed
                 while( swIsOn() ){}     //in case sw still pressed, wait for release
                 softReset();
+
                 while(1){}
+
                 }
