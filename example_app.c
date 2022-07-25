@@ -1,40 +1,32 @@
-/*-----------------------------------------------------------------------------
-    example_app.c (loaded via bootloader) -
-      blink an led, allow resetting back into bootloader via switch or via
-      rx falling edge (from a pc)
 
+/*-----------------------------------------------------------------------------
+    blink_app (loaded via bootloader)
     build with ld option-
         -Wl,-section-start=.text=0x400
         (byte address 0x800, word address 0x400)
-        this value will match what the bootloader BL_SIZE value is set to
-        in terms of a byte address (in this case 2048 -> 0x800 -> 0x400 word)
-
-    the following commands assume the program arguments are in the current
-    directory, or in the path environment variable, and the file arguments
-    are in the current directory, change as needed for your own needs
 
     convert elf to bin format for xmodem use-
-    $ avr-objcopy -binary my_project.elf -O my_project.bin
+    avr-objcopy -binary my_project.elf -O my_project.bin
 
     Linux command line-
-    $ stty -F /dev/ttyACM1 230400
+    $ stty -F /dev/ttyACM1 115200
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
 
     this example also allows using the pc to reset the mcu via the rx pin
     if any falling edge seen on the rx pin or the sw pin, the port irq will
     fire and either software reset (sw) or first erase the last byte in eeprom (rx)
 
-    if the sw pin is triggered, it will remain pressed long enough for the
+    if the sw pin is triggered, it will remain pressed long enough for the 
     bootloader to see, and will remain in the bootloader
 
-    if the rx pin is triggered (via pc), we wil need to erase the last byte in
+    if the rx pin is triggered (via pc), we wil need to erase the last byte in 
     eeprom so the bootloader does not jump to the app
     this method will require the bootloader to load an app as the eeprom byte will
     need to be set before the bootloader will jump to an app again, where the sw pin
     does not require programming (just power up again without sw pressed)
 
     Linux command line (first trigger rx pin by sending 0xFF)-
-    $ stty -F /dev/ttyACM1 230400
+    $ stty -F /dev/ttyACM1 115200
     $ printf "\xFF" > /dev/ttyACM1
     $ sx my_project_bin < /dev/ttyACM1 > /dev/ttyACM1
 -----------------------------------------------------------------------------*/
@@ -49,6 +41,7 @@
                 typedef struct {
                     PORT_t* port;
                     uint8_t pin;
+                    uint8_t pinbm;
                     bool onVal;
                     }
 pin_t           ;
@@ -56,11 +49,14 @@ pin_t           ;
                 //our pins- Led and Sw
                 //Sw and UartRx falling edge will trigger a reset
                 static const pin_t
-Led             = { &PORTA, 3, 0 };
+Led             = { &PORTA, 3, 1<<3, 0 };
                 static const pin_t
-Sw              = { &PORTB, 7, 0 };
+Sw              = { &PORTB, 7, 1<<7, 0 };
                 static const pin_t
-UartRx          = { &PORTB, 3, 0 };
+UartRx          = { &PORTB, 3, 1<<3, 0 };
+
+                static volatile uint8_t* const
+eeLastBytePtr   = (volatile uint8_t*)EEPROM_END;
 
 
                 static void
@@ -69,40 +65,44 @@ softReset       () { CCP = 0xD8; RSTCTRL.SWRR = 1; } //software reset
                 static void
 init            ()
                 {
-                (&Sw.port->PIN0CTRL)[Sw.pin] = 0x08 | 0x03; //pullup on, falling edge sense
+                (&Sw.port->PIN0CTRL)[Sw.pin] = 0x08 | 0x03; //pullup on, falling edge sense        
                 (&UartRx.port->PIN0CTRL)[UartRx.pin] = 0x08 | 0x03; //pullup on, falling edge sense
                 asm("sei");
                 }
 
                 static void
-writePage       () { CCP = 0x9D; NVMCTRL.CTRLA = 3; } //ERWP, erase page, write page buffer
+nvmWrite        () //ERWP, erase page, write page buffer
+                {
+                CCP = 0x9D;
+                NVMCTRL.CTRLA = 3; //ERWP
+                }
 
                 static void
-eeBLsignal      ()
+eeAppOK         ()
                 {
-                *(volatile uint8_t*)EEPROM_END = 0xFF; //write to eeprom page buffer, last eeprom byte
-                writePage(); //write eeprom (0xFF signifies to bootloader that flash is unprogrammed)
+                *eeLastBytePtr = 0xFF; //write to eeprom page buffer, last eeprom byte
+                nvmWrite(); //write eeprom (0xFF signifies to bootloader that flash is unprogrammed)
                 while( NVMCTRL.STATUS & 2 ){} //ee is busy
                 }
 
                 //both pin irq's are on same port, so only PORTB isr
-                __attribute(( signal, used )) void
-PORTB_PORT_vect ()
+                __attribute(( signal, used )) void 
+PORTB_PORT_vect()
                 {
                 uint8_t flags = PORTB.INTFLAGS; //both Sw and UartRx flags
                 PORTB.INTFLAGS = flags; //clear in case not our pin
-                if( 0 == (flags & ((1<<Sw.pin)|(1<<UartRx.pin))) ) return; //not our pins
+                if( 0 == (flags & (Sw.pinbm|UartRx.pinbm)) ) return; //not our pins
                 //if sw pin, then just reset- bootloader will also see pin pressed and remain in bootloader
                 //if UartRx pin, then need to erase last eeprom byte so bootloader does not jump to this app again
-                if( flags & (1<<UartRx.pin) ) eeBLsignal();
+                if( flags & UartRx.pinbm ) eeAppOK();
                 softReset();
                 }
 
                 static void
 ledTog          ()
                 {
-                Led.port->DIRSET = 1<<Led.pin;
-                Led.port->OUTTGL = 1<<Led.pin;
+                Led.port->DIRSET = Led.pinbm;
+                Led.port->OUTTGL = Led.pinbm;
                 }
 
                 int
