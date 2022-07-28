@@ -96,7 +96,7 @@ pin_t           ;
                 static const pin_t
 Led             = { &PORTA, 3, 1<<3, 0 };
                 static const pin_t
-Sw              = { &PORTB, 7, 1<<0, 0 };
+Sw              = { &PORTB, 7, 1<<7, 0 };
 // ----------
 
 
