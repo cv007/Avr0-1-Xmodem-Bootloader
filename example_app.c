@@ -5,7 +5,7 @@
         (byte address 0x800, word address 0x400)
 
     convert elf to bin format for xmodem use-
-    avr-objcopy -binary my_project.elf -O my_project.bin
+    avr-objcopy my_project.elf -O binary my_project.bin
 
     Linux command line-
     $ stty -F /dev/ttyACM1 230400
